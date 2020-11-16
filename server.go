@@ -8,10 +8,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"html"
 	"io/ioutil"
 	"log"
 	"net/http"
-	"html"
 	"os"
 	"strconv"
 	"text/template"
@@ -54,13 +54,13 @@ var (
 // Data used by the frame templates, common to every page
 //
 type FrameData struct {
-	Title string
+	Title      string
 	IsLoggedIn bool
 }
 
 func loadTemplates() {
 	tmpls = template.New("tmpls")
-	toParse := []string {
+	toParse := []string{
 		"data/frame-pre-content.html",
 		"data/frame-post-content.html",
 		"data/login.html",
@@ -77,7 +77,7 @@ func loadTemplates() {
 			// and can't be handled.
 			log.Fatal(err)
 		}
-		// Successive calls to Parse allow adding more templates to the 
+		// Successive calls to Parse allow adding more templates to the
 		// same object, if they are wrapped in a {{ define }} block.
 		tmpls, err = tmpls.Parse(string(f))
 		if err != nil {
@@ -194,7 +194,7 @@ func AddContext(next http.Handler) http.Handler {
 	})
 }
 
-// 
+//
 // Data required for rendering the login page
 //
 type LoginData struct {
@@ -215,7 +215,7 @@ func loginForm(response http.ResponseWriter, request *http.Request) {
 	// Execute the template into our buffer.
 	//
 	buf := &bytes.Buffer{}
-	err := t.Execute(buf, &LoginData{&FrameData{"Login", false},""})
+	err := t.Execute(buf, &LoginData{&FrameData{"Login", false}, ""})
 
 	//
 	// If there were errors, then show them.
@@ -234,9 +234,10 @@ func loginForm(response http.ResponseWriter, request *http.Request) {
 //
 // validate tests a login is correct.
 //
-func validate(host string, username string, password string) (bool, error) {
-
+func validate(host, username, password, smtpHost, smtpUser, smtpPass string) (bool, error) {
+	// Validate the IMAP details
 	x := NewIMAP(host, username, password)
+	defer x.Close()
 	res, err := x.Connect()
 	if !res {
 		return false, err
@@ -244,8 +245,12 @@ func validate(host string, username string, password string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	x.Close()
-	return true, nil
+
+	// Validate the SMTP details
+	y := NewSMTPConnection(smtpHost, smtpUser, smtpPass)
+	defer y.Close()
+	err = y.Connect()
+	return err == nil, err
 }
 
 //
@@ -259,20 +264,38 @@ func loginHandler(response http.ResponseWriter, request *http.Request) {
 	user := request.FormValue("name")
 	pass := request.FormValue("pass")
 
+	smtpHost := request.FormValue("smtp-host")
+	smtpUser := request.FormValue("smtp-name")
+	smtpPass := request.FormValue("smtp-pass")
+
+	// Default to the same as the IMAP credentials if they weren't supplied
+	if smtpHost == "" {
+		smtpHost = host
+	}
+	if smtpUser == "" {
+		smtpUser = user
+	}
+	if smtpPass == "" {
+		smtpPass = pass
+	}
+
 	//
 	// If this succeeded then let the login succeed.
 	//
-	result, error := validate(host, user, pass)
+	result, err := validate(host, user, pass, smtpHost, smtpUser, smtpPass)
 
-	if result && error == nil {
+	if result && err == nil {
 
 		//
 		// Store everything in the cookie
 		//
 		value := map[string]string{
-			"host": host,
-			"user": user,
-			"pass": pass,
+			"host":      host,
+			"user":      user,
+			"pass":      pass,
+			"smtp-host": smtpHost,
+			"smtp-user": smtpUser,
+			"smtp-pass": smtpPass,
 		}
 		if encoded, err := cookieHandler.Encode("cookie", value); err == nil {
 			cookie := &http.Cookie{
@@ -293,7 +316,7 @@ func loginHandler(response http.ResponseWriter, request *http.Request) {
 	//
 	x := &LoginData{
 		&FrameData{"Login", false},
-		error.Error(),
+		err.Error(),
 	}
 
 	//
@@ -309,7 +332,7 @@ func loginHandler(response http.ResponseWriter, request *http.Request) {
 	// Execute the template into our buffer.
 	//
 	buf := &bytes.Buffer{}
-	err := t.Execute(buf, x)
+	err = t.Execute(buf, x)
 
 	//
 	// If there were errors, then show them.
@@ -365,7 +388,7 @@ func folderListHandler(response http.ResponseWriter, request *http.Request) {
 	x := &PageData{
 		&FrameData{"Folders", true},
 		"",
-		make([]IMAPFolder,0),
+		make([]IMAPFolder, 0),
 	}
 
 	//
@@ -740,11 +763,27 @@ func logoutHandler(response http.ResponseWriter, request *http.Request) {
 	http.Redirect(response, request, "/", 302)
 }
 
+/*func composeHandler(response http.ResponseWriter, request *http.Request) {
+	user := request.Context().Value(keyUser)
+	pass := request.Context().Value(keyPass)
+	host := request.Context().Value(keyHost)
+	// TODO assuming the credentials are the same for IMAP and SMTP!
+	// This might not be the case!
+
+
+	if request.Method == "POST" {
+		// Validate and send
+		// Redirect on success
+		http.Redirect(response, request, "/", http.StatusFound)
+	} else {
+	}
+}*/
+
 // main is our entry-point
 func main() {
 	//
 	// Load our HTML templates
-	// 
+	//
 	loadTemplates()
 
 	//
@@ -793,6 +832,12 @@ func main() {
 	//
 	router.HandleFunc("/attach/{folder}/{number}/{filename}", attachmentHandler).Methods("GET")
 	router.HandleFunc("/attach/{folder}/{number}/{filename}/", attachmentHandler).Methods("GET")
+
+	//
+	// Compose message
+	//
+	// router.HandleFunc("/compose", composeHandler).Methods("GET", "POST")
+	// router.HandleFunc("/compose/", composeHandler).Methods("GET", "POST")
 
 	http.Handle("/", router)
 

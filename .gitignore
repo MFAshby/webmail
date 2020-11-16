@@ -3,3 +3,4 @@ webmail-*
 .cookie.blk
 .cookie.hsh
 static.go
+__debug_bin

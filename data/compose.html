@@ -1,0 +1,11 @@
+{{ define "compose.html" }}
+{{ template "frame-pre-content.html" . }}
+{{ template "frame-post-content.html" . }}
+ <form>
+	 <label for="to">To</label>
+	 <input id="to" name="to" placeholder="joe@bloggs.com"></input>
+	 <label for="message">Message</label>
+	 <input id="message" name="message" placeholder="Hello There"></input>
+	 <input type="submit" method="post">Send</input>
+ </form>
+{{ end }}
