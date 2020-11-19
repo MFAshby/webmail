@@ -44,6 +44,11 @@ const (
 
 	// keyPass stores the password
 	keyPass key = iota
+
+	keySmtpHost key = iota
+	keySmtpUser key = iota
+	keySmtpPass key = iota
+	keySmtpFrom key = iota
 )
 
 var (
@@ -68,6 +73,7 @@ func loadTemplates() {
 		"data/folder-list.html",
 		"data/message.html",
 		"data/messages.html",
+		"data/compose.html",
 	}
 	for _, file := range toParse {
 		log.Printf("Parsing template %v", file)
@@ -170,9 +176,17 @@ func AddContext(next http.Handler) http.Handler {
 				user := cookieValue["user"]
 				pass := cookieValue["pass"]
 				host := cookieValue["host"]
+				smtpUser := cookieValue["smtp-user"]
+				smtpPass := cookieValue["smtp-pass"]
+				smtpHost := cookieValue["smtp-host"]
+				smtpFrom := cookieValue["smtp-from"]
 				ctx := context.WithValue(r.Context(), keyUser, user)
 				ctx = context.WithValue(ctx, keyPass, pass)
 				ctx = context.WithValue(ctx, keyHost, host)
+				ctx = context.WithValue(ctx, keySmtpUser, smtpUser)
+				ctx = context.WithValue(ctx, keySmtpPass, smtpPass)
+				ctx = context.WithValue(ctx, keySmtpHost, smtpHost)
+				ctx = context.WithValue(ctx, keySmtpFrom, smtpFrom)
 				//
 				// And fire it up.
 				//
@@ -207,15 +221,10 @@ type LoginData struct {
 //
 func loginForm(response http.ResponseWriter, request *http.Request) {
 	//
-	// Lookup the HTML template
-	//
-	t := tmpls.Lookup("login.html")
-
-	//
 	// Execute the template into our buffer.
 	//
 	buf := &bytes.Buffer{}
-	err := t.Execute(buf, &LoginData{&FrameData{"Login", false}, ""})
+	err := tmpls.ExecuteTemplate(buf, "login.html", &LoginData{&FrameData{"Login", false}, ""})
 
 	//
 	// If there were errors, then show them.
@@ -267,17 +276,7 @@ func loginHandler(response http.ResponseWriter, request *http.Request) {
 	smtpHost := request.FormValue("smtp-host")
 	smtpUser := request.FormValue("smtp-name")
 	smtpPass := request.FormValue("smtp-pass")
-
-	// Default to the same as the IMAP credentials if they weren't supplied
-	if smtpHost == "" {
-		smtpHost = host
-	}
-	if smtpUser == "" {
-		smtpUser = user
-	}
-	if smtpPass == "" {
-		smtpPass = pass
-	}
+	smtpFrom := request.FormValue("smtp-from")
 
 	//
 	// If this succeeded then let the login succeed.
@@ -296,6 +295,7 @@ func loginHandler(response http.ResponseWriter, request *http.Request) {
 			"smtp-host": smtpHost,
 			"smtp-user": smtpUser,
 			"smtp-pass": smtpPass,
+			"smtp-from": smtpFrom,
 		}
 		if encoded, err := cookieHandler.Encode("cookie", value); err == nil {
 			cookie := &http.Cookie{
@@ -323,16 +323,11 @@ func loginHandler(response http.ResponseWriter, request *http.Request) {
 	// If we reached this point there was an error with the
 	// login-process.
 	//
-	// Load the `login.html` template, and populate it with the
-	// error-message
-	//
-	t := tmpls.Lookup("login.html")
-
 	//
 	// Execute the template into our buffer.
 	//
 	buf := &bytes.Buffer{}
-	err = t.Execute(buf, x)
+	err = tmpls.ExecuteTemplate(buf, "login.html", x)
 
 	//
 	// If there were errors, then show them.
@@ -415,15 +410,10 @@ func folderListHandler(response http.ResponseWriter, request *http.Request) {
 	}
 
 	//
-	//  Lookup the template
-	//
-	t := tmpls.Lookup("folders.html")
-
-	//
 	// Execute the template into our buffer.
 	//
 	buf := &bytes.Buffer{}
-	err = t.Execute(buf, x)
+	err = tmpls.ExecuteTemplate(buf, "folders.html", x)
 
 	//
 	// If there were errors, then show them.
@@ -557,27 +547,12 @@ func messageListHandler(response http.ResponseWriter, request *http.Request) {
 	}
 
 	//
-	// Lookup the messages view
-	//
-	t := tmpls.Lookup("messages.html")
-
-	//
 	// Execute the template into our buffer.
 	//
-	buf := &bytes.Buffer{}
-	err = t.Execute(buf, x)
-
-	//
-	// If there were errors, then show them.
+	err = tmpls.ExecuteTemplate(response, "messages.html", x)
 	if err != nil {
-		fmt.Fprintf(response, err.Error())
-		return
+		log.Print(err)
 	}
-
-	//
-	// Otherwise write the result.
-	//
-	buf.WriteTo(response)
 }
 
 // Show a single message.
@@ -655,27 +630,12 @@ func messageHandler(response http.ResponseWriter, request *http.Request) {
 	x.FrameData = &FrameData{html.EscapeString("Message " + folder + " [" + uid + "]"), true}
 
 	//
-	// Lookup the the message view template
-	//
-	t := tmpls.Lookup("message.html")
-
-	//
 	// Execute the template into our buffer.
 	//
-	buf := &bytes.Buffer{}
-	err = t.Execute(buf, x)
-
-	//
-	// If there were errors, then show them.
+	err = tmpls.ExecuteTemplate(response, "message.html", x)
 	if err != nil {
-		fmt.Fprintf(response, err.Error())
-		return
+		log.Print(err)
 	}
-
-	//
-	// Otherwise write the result.
-	//
-	buf.WriteTo(response)
 }
 
 // Download an attachment
@@ -763,21 +723,44 @@ func logoutHandler(response http.ResponseWriter, request *http.Request) {
 	http.Redirect(response, request, "/", 302)
 }
 
-/*func composeHandler(response http.ResponseWriter, request *http.Request) {
-	user := request.Context().Value(keyUser)
-	pass := request.Context().Value(keyPass)
-	host := request.Context().Value(keyHost)
-	// TODO assuming the credentials are the same for IMAP and SMTP!
-	// This might not be the case!
+func composeHandler(response http.ResponseWriter, request *http.Request) {
+	user, _ := request.Context().Value(keySmtpUser).(string)
+	pass, _ := request.Context().Value(keySmtpPass).(string)
+	host, _ := request.Context().Value(keySmtpHost).(string)
+	from, _ := request.Context().Value(keySmtpFrom).(string)
 
+	type PageData struct {
+		*FrameData
+		Flash string
+	}
 
 	if request.Method == "POST" {
 		// Validate and send
-		// Redirect on success
-		http.Redirect(response, request, "/", http.StatusFound)
+		to := request.PostFormValue("to")
+		subject := request.PostFormValue("subject")
+		msg := request.PostFormValue("message")
+		con := NewSMTPConnection(host, user, pass)
+		if err := con.Send(from, to, subject, msg); err != nil {
+			// render the page with an error message
+			e2 := tmpls.ExecuteTemplate(response, "compose.html", &PageData{&FrameData{"Compose", true}, err.Error()})
+			if e2 != nil {
+				log.Print(e2)
+			}
+		} else {
+			// render the page with a success message?
+			e2 := tmpls.ExecuteTemplate(response, "compose.html", &PageData{&FrameData{"Compose", true}, "Message sent successfully"})
+			if e2 != nil {
+				log.Print(e2)
+			}
+		}
 	} else {
+		// Render the page with no message
+		e2 := tmpls.ExecuteTemplate(response, "compose.html", &PageData{&FrameData{"Compose", true}, ""})
+		if e2 != nil {
+			log.Print(e2)
+		}
 	}
-}*/
+}
 
 // main is our entry-point
 func main() {
@@ -836,8 +819,8 @@ func main() {
 	//
 	// Compose message
 	//
-	// router.HandleFunc("/compose", composeHandler).Methods("GET", "POST")
-	// router.HandleFunc("/compose/", composeHandler).Methods("GET", "POST")
+	router.HandleFunc("/compose", composeHandler).Methods("GET", "POST")
+	router.HandleFunc("/compose/", composeHandler).Methods("GET", "POST")
 
 	http.Handle("/", router)
 

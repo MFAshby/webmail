@@ -1,11 +1,27 @@
 {{ define "compose.html" }}
 {{ template "frame-pre-content.html" . }}
 {{ template "frame-post-content.html" . }}
- <form>
-	 <label for="to">To</label>
-	 <input id="to" name="to" placeholder="joe@bloggs.com"></input>
-	 <label for="message">Message</label>
-	 <input id="message" name="message" placeholder="Hello There"></input>
-	 <input type="submit" method="post">Send</input>
- </form>
+<div class="col-sm-9 col-md-9">
+	{{if .Flash}}
+	<div style="margin-top:50px;" class="mainbox col-md-6 col-md-offset-3 col-sm-8 col-sm-offset-2">
+	  <div class="panel panel-info" >
+		<div class="panel-heading">
+		  <div class="panel-title">Error</div>
+		</div>
+		<div style="padding-top:30px" class="panel-body" >
+			<p>{{.Flash}}</p>
+		</div>
+	  </div>
+	</div>
+	{{ end }}
+	<form action="" method="post">
+		<label for="to">To</label>
+		<input id="to" name="to" placeholder="joe@bloggs.com"></input>
+		<label for="subject">Subject</label>
+		<input id="subject" name="subject" placeholder="Hello There"></input>
+		<label for="message">Message</label>
+		<input id="message" name="message" placeholder="How are you doing?"></input>
+		<input type="submit" method="post">Send</input>
+	</form>
+ </div>
 {{ end }}

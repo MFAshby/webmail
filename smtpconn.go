@@ -6,12 +6,16 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/smtp"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/emersion/go-message"
 )
 
 type SMTPConnection struct {
@@ -108,4 +112,33 @@ func (c *SMTPConnection) Connect() error {
 		return fmt.Errorf("unexpected authentication params %v", params)
 	}
 	return c.cli.Auth(auth)
+}
+
+func (c *SMTPConnection) Send(from, to, subject, msg string) error {
+	if c.cli == nil {
+		err := c.Connect()
+		if err != nil {
+			return err
+		}
+	}
+	c.cli.Mail(from)
+	c.cli.Rcpt(to)
+	wr, err := c.cli.Data()
+	defer wr.Close()
+
+	h := message.Header{}
+	h.SetContentType("text/plain", nil)
+	h.Set("From", from)
+	h.Set("To", to)
+	h.Set("Subject", subject)
+	h.Set("Date", time.Now().Format(time.RFC1123)) // Not sure this is the right one, should check
+	w, err := message.CreateWriter(wr, h)
+	if err != nil {
+		return err
+	}
+	_, err = io.WriteString(w, msg)
+	if err != nil {
+		return err
+	}
+	return nil
 }
